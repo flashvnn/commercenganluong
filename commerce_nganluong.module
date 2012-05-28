@@ -1,0 +1,248 @@
+<?php
+include_once 'nganluong.class.php';
+
+// $Id$
+/**
+ * Implements hook_menu().
+ */
+
+function commerce_nganluong_menu() {
+  $items['commerce/nganluong/return/%'] = array(
+    'title'            => 'Ngan Luong payment callback',
+    'page callback'    => 'commerce_nganluong_handle_return',
+    'page arguments'   => array(3),  
+    'access arguments' => array('access checkout'),
+    'type'             => MENU_CALLBACK,    
+  );
+
+  return $items;
+}
+
+/**
+ * function commerce_nganluong_get_return_url
+ */
+function commerce_nganluong_get_return_url($orderid) {
+   return url("commerce/nganluong/return/".$orderid,array("absolute"=>TRUE));
+}
+/**
+ * @file
+ * Implements NganLuong payment method for Drupal Commerce.
+ */
+
+/**
+ * Implements hook_commerce_payment_method_info().
+ */
+function commerce_nganluong_commerce_payment_method_info() {
+  $payment_methods = array();
+
+  $payment_methods['nganluong'] = array(
+    'base'                   => 'commerce_nganluong',
+    'title'                  => t('NganLuong Payment'),
+    'short_title'            => t('NganLuong'),
+    'description'            => t('NganLuong Payment Gateway'),
+    //'terminal'             => FALSE,
+    'offsite'                => TRUE,
+    'active'                 => TRUE,
+    'offsite_autoredirect'   => FALSE,
+  );
+
+  return $payment_methods;
+}
+
+
+/**
+ * Payment method callback for settings form.
+ */
+function commerce_nganluong_settings_form($settings) {
+
+  $settings += array(
+    'nganluong_receiver_email'=> variable_get('site_mail', ini_get('sendmail_from')),
+    'nganluong_checkout'      => 'https://www.nganluong.vn/checkout.php',
+    'nganluong_merchantID'    => '',
+    'nganluong_secure_code'   => '',
+  );
+
+
+  $form['nganluong_receiver_email'] =  array(
+    '#type'          => 'textfield',
+    '#title'         => t('Ngân Lượng Receiver Email'),
+    '#default_value' => $settings['nganluong_receiver_email'],
+    '#size'          => 70,
+    '#maxlength'     => 180,
+    '#description'   => t('Đây là địa chỉ email của người nhận( người bán hàng) cho quý khách hàng chuyển tiền và thanh toán')
+  );
+
+  $form['nganluong_checkout'] =  array(
+    '#type'          => 'textfield',
+    '#title'         => t('Ngân Lượng Checkout'),
+    '#default_value' => $settings['nganluong_checkout'],
+    '#size'          => 70,
+    '#maxlength'     => 180,
+    '#description'   => t('URL của trang thanh toán NgânLượng.vn')
+  ); 
+
+  $form['nganluong_merchantID'] =  array(
+    '#type'          => 'textfield',
+    '#title'         => t('Ngân Lượng Merchant Site'),
+    '#default_value' => $settings['nganluong_merchantID'],
+    '#size'          => 70,
+    '#maxlength'     => 180,
+    '#description'   => t('Mã Merchant Site')
+  );
+    $form['nganluong_secure_code'] =  array(
+    '#type'          => 'textfield',
+    '#title'         => t('Ngân Lượng Secure Code'),
+    '#default_value' => $settings['nganluong_secure_code'],
+    '#size'          => 70,
+    '#maxlength'     => 180,
+    '#description'   => t('Mật khẩu giao tiếp')
+  );  
+
+
+  return $form;
+}
+/**
+ * Payment method callback; generation callback for the payment submission form.
+ *
+ * @param $payment_method
+ *   An array of the current settings.
+ * @param $pane_values
+ *   The current values of the pane.
+ * @param $checkout_pane
+ *   The checkout pane array. The checkout pane will be NULL if the payment is
+ *   being added through the administration form.
+ * @param $order
+ *   The order object.
+ * @return array A form snippet for the checkout pane.
+ */
+function commerce_nganluong_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
+  $form['commerce_nganluong_information'] = array(
+    '#markup' => '<span class="commerce_nganluong-info">' . t('(Continue with checkout to complete payment via Nganluong.)') . '</span>',
+  );
+
+  return $form;
+}
+
+function commerce_nganluong_redirect_form($form, &$form_state, $order, $payment_method) {
+  //dpm($form_state,"form_state");
+  //dpm($order,"order");
+  //dpm($payment_method,"payment_method");
+  $total = field_get_items('commerce_order', $order, 'commerce_order_total');
+  $nl = new NL_Checkout($payment_method['settings']['nganluong_checkout'],$payment_method['settings']['nganluong_merchantID'],$payment_method['settings']['nganluong_secure_code']);
+  $ng_return_url    = commerce_nganluong_get_return_url($order->order_id);
+  $transaction_info = "";
+  $order_code       = $order->order_id;
+  $price_total      = $total[0]['amount'];  
+  $payment_url      = $nl->buildCheckoutUrl($ng_return_url,$payment_method['settings']['nganluong_receiver_email'],$transaction_info,$order_code,$price_total);
+  //dpm(array("$payment_url"=>$payment_url));
+  $form['#action']  = $payment_url;
+  $form['submit']   = array(
+    '#type'   => 'submit',
+    '#value'  => t('Chuyển tới Ngân Lượng'),
+  );
+  return $form;
+}
+
+/**
+ * function commerce_nganluong_handle_return
+ */
+
+function commerce_nganluong_handle_return($order_id) {
+  if($order = commerce_order_load($order_id)){
+    $instance_id    = $order->data['payment_method'];
+    $payment_method = commerce_payment_method_instance_load($instance_id);
+    //dpm($order, $name = 'payment_method');
+    //dpm($payment_method, $name = 'payment_method');
+    if($payment_method['method_id']=="nganluong"){
+
+      $transaction_info = @$_GET['transaction_info'];
+      $order_code       = @$_GET['order_code'];
+      $price            = @$_GET['price'];
+      $payment_id       = @$_GET['payment_id'];
+      $payment_type     = @$_GET['payment_type'];
+      $error_text       = @$_GET['error_text'];
+      $secure_code      = @$_GET['secure_code'];
+
+      $data = array(
+          'transaction_info' => $transaction_info,
+          'order_code'       => $order_code,
+          'price'            => $price,
+          'payment_id'       => $payment_id,
+          'payment_type'     => $payment_type,
+          'error_text'       => $error_text,
+          'secure_code'      => $secure_code,          
+        );
+      //check order id and order price
+      $total = field_get_items('commerce_order', $order, 'commerce_order_total');
+      if($order_code!=$order->order_id || $price!=$total[0]['amount']){
+        commerce_nganluong_handle_error($order,$payment_method);
+      }       
+      $nl = new NL_Checkout($payment_method['settings']['nganluong_checkout'],$payment_method['settings']['nganluong_merchantID'],$payment_method['settings']['nganluong_secure_code']);
+      $check = $nl->verifyPaymentUrl($transaction_info, $order_code, $price, $payment_id, $payment_type, $error_text, $secure_code);
+      if($check){
+        _commerce_nganluong_transaction_save($payment_method, $order, $data, COMMERCE_PAYMENT_STATUS_SUCCESS, 'The payment has completed.');
+        commerce_payment_redirect_pane_next_page($order);
+        drupal_goto(commerce_checkout_order_uri($order));
+      }else{
+        commerce_nganluong_handle_error($order,$payment_method);
+      }
+    }
+  }
+}
+function commerce_nganluong_handle_error($order,$payment_method,$wd_message=""){
+        drupal_set_message("Có lỗi trong quá trình giao dịch, xin kiểm tra lại", $type = 'error', $repeat = TRUE);
+        commerce_payment_redirect_pane_previous_page($order);
+        drupal_goto(commerce_checkout_order_uri($order));
+}
+
+/**
+ * Save a transaction.
+ *
+ * @param $payment_method
+ * @param $order
+ * @param $data
+ * @param $status
+ * @param string $message
+ *
+ */
+function _commerce_nganluong_transaction_save($payment_method, $order, $data, $status, $message = '') {
+  $total = field_get_items('commerce_order', $order, 'commerce_order_total');
+  $transaction                        = _commerce_nganluong_get_transaction($order);
+  $transaction->instance_id           = $payment_method['instance_id'];
+  $transaction->amount                = $total[0]['amount'];
+  $transaction->currency_code         = $total[0]['currency_code'];
+  $transaction->status                = $status;
+  $transaction->remote_status         = $data['payment_id'];
+  $transaction->remote_id             = $order->order_id;
+  $transaction->payload[REQUEST_TIME] = $data;
+  $transaction->message               = t($message);
+  commerce_payment_transaction_save($transaction);
+}
+
+/**
+ * Create or retrieve a transaction.
+ *
+ * @param $order
+ * @param bool $create
+ * @return bool|mixed|null
+ */
+function _commerce_nganluong_get_transaction($order, $create = TRUE) {
+  $query = new EntityFieldQuery();
+  $result = $query
+    ->entityCondition('entity_type', 'commerce_payment_transaction')
+    ->propertyCondition('order_id', $order->order_id)
+    ->execute();
+
+  if (!empty($result['commerce_payment_transaction'])) {
+    return commerce_payment_transaction_load(key($result['commerce_payment_transaction']));
+  }
+  else {
+    if ($create) {
+      // Create a new payment transaction for the order.
+      return commerce_payment_transaction_new('nganluong', $order->order_id);
+    }
+    else {
+      return NULL;
+    }
+  }
+}
